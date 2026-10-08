@@ -13,7 +13,7 @@ function pct(v) {
   return v !== undefined && v !== null ? `${(v * 100).toFixed(1)}%` : 'N/A';
 }
 
-// ── Bounding-box overlay on the image canvas ───────────────────────────────
+// ── Bounding-box & mask overlay on the image canvas ────────────────────────
 function BBoxOverlay({ detections, imgNaturalSize, isTyre }) {
   if (!detections?.length || !imgNaturalSize) return null;
   const { naturalW, naturalH, displayW, displayH } = imgNaturalSize;
@@ -22,16 +22,18 @@ function BBoxOverlay({ detections, imgNaturalSize, isTyre }) {
 
   return (
     <svg
+      viewBox={`0 0 ${displayW} ${displayH}`}
+      preserveAspectRatio="none"
       style={{
         position: 'absolute',
-        top: 0, left: 0,
-        width: displayW,
-        height: displayH,
+        inset: 0,
+        width: '100%',
+        height: '100%',
         pointerEvents: 'none',
       }}
     >
       {detections.map((d, i) => {
-        const bbox = isTyre ? d.bbox : d.localization.bbox;
+        const bbox = isTyre ? d.bbox : d.localization?.bbox;
         if (!bbox || bbox.length < 4) return null;
         const [x1, y1, x2, y2] = bbox;
         const rx = x1 * scaleX;
@@ -51,8 +53,19 @@ function BBoxOverlay({ detections, imgNaturalSize, isTyre }) {
           confStr = pct(d.classification.cnn_confidence);
         }
 
+        const polygon = !isTyre ? d.localization?.mask_polygon : null;
+        const pointsStr = polygon?.map(([px, py]) => `${px * scaleX},${py * scaleY}`).join(' ');
+
         return (
           <g key={i}>
+            {pointsStr && (
+              <polygon
+                points={pointsStr}
+                fill={d.classification_agreement ? 'rgba(34, 197, 94, 0.25)' : 'rgba(245, 158, 11, 0.25)'}
+                stroke={strokeCol}
+                strokeWidth="1.5"
+              />
+            )}
             <rect
               x={rx} y={ry} width={rw} height={rh}
               fill="none"
@@ -382,7 +395,7 @@ export default function WheelInspection() {
                 </div>
               </>
             ) : (
-              /* ── Rim Results Display (Preserved 100%) ────────────────── */
+              /* ── Rim Results Display ────────────────── */
               <>
                 {/* Primary Classification */}
                 <div>
@@ -502,6 +515,11 @@ function DetectionCard({ ld, index }) {
         <div style={{ color: '#475569', fontSize: '0.68rem', fontFamily: 'monospace', marginTop: '0.15rem' }}>
           [{x1.toFixed(0)},{y1.toFixed(0)} → {x2.toFixed(0)},{y2.toFixed(0)}]
         </div>
+        {loc.mask_area_pixels !== undefined && loc.mask_area_pixels !== null && (
+          <div style={{ color: '#38bdf8', fontSize: '0.68rem', marginTop: '0.15rem' }}>
+            Mask area: {loc.mask_area_pixels} px ({pct(loc.mask_area_ratio)})
+          </div>
+        )}
       </div>
       <div>
         <div style={{ color: '#64748b', fontSize: '0.68rem', textTransform: 'uppercase', marginBottom: '0.15rem' }}>CNN Classification</div>

@@ -138,6 +138,9 @@ async def inspect_wheel(request: WheelInspectionRequest):
                         yolo_confidence=ld.localization.yolo_confidence,
                         bbox=ld.localization.bbox,
                         mask_status=ld.localization.mask_status,
+                        mask_area_pixels=ld.localization.mask_area_pixels,
+                        mask_area_ratio=ld.localization.mask_area_ratio,
+                        mask_polygon=ld.localization.mask_polygon,
                     ),
                     classification=HybridClassificationInfo(
                         source=ld.classification.source,
@@ -164,17 +167,20 @@ async def inspect_wheel(request: WheelInspectionRequest):
         )
 
         # Determine top-level defect_type and confidence for backward-compat fields
+        # Priority: first localized CNN defect → full-image CNN fallback
         fic = hybrid_result.full_image_cnn or {}
         if api_localized:
             top = api_localized[0].classification
             top_defect = top.cnn_defect_type
             top_confidence = top.cnn_confidence
+            # Location is the first YOLO bbox
             top_bbox = api_localized[0].localization.bbox
         else:
             top_defect = fic.get("defect_type")
             top_confidence = fic.get("confidence")
             top_bbox = None
 
+        # Legacy rim field: use full-image CNN result
         rim_legacy = None
         if fic:
             rim_legacy = RimCNNResult(
