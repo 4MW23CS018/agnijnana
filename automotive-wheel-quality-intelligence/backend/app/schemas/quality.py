@@ -89,6 +89,9 @@ class HybridLocalizedDefect(BaseModel):
     localization: HybridLocalizationInfo
     classification: HybridClassificationInfo
     classification_agreement: bool
+    severity_level: Optional[str] = Field(default=None, description="Defect severity level ('Low', 'Critical', or 'Uncertain')")
+    severity_score: Optional[int] = Field(default=None, ge=0, le=100, description="Numerical severity score [0, 100]")
+    severity_rationale: Optional[str] = Field(default=None, description="Human-readable explanation of severity assessment")
 
 
 class HybridRimResult(BaseModel):
@@ -150,6 +153,8 @@ class WheelAIOutputContract(BaseModel):
         default=None, description="Bounding box [x1,y1,x2,y2] or null"
     )
     severity: Optional[str] = None
+    severity_score: Optional[int] = Field(default=None, ge=0, le=100, description="Primary defect severity score [0, 100]")
+    severity_rationale: Optional[str] = Field(default=None, description="Human-readable explanation of primary severity assessment")
     defect_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
     root_cause: Optional[str] = None
