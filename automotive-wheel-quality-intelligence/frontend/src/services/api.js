@@ -30,7 +30,7 @@ export async function uploadWheelImage(file) {
   return response.json();
 }
 
-export async function inspectWheel(wheelId, imagePath, batchId = null, machineId = null) {
+export async function inspectWheel(wheelId, imagePath, batchId = null, machineId = null, component = 'rim') {
   const response = await fetch(`${API_BASE_URL}/api/inspection/inspect`, {
     method: 'POST',
     headers: {
@@ -41,6 +41,7 @@ export async function inspectWheel(wheelId, imagePath, batchId = null, machineId
       image_path: imagePath,
       batch_id: batchId,
       machine_id: machineId,
+      component: component,
     }),
   });
 

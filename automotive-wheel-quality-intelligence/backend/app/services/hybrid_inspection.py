@@ -95,6 +95,7 @@ class LocalizationInfo(BaseModel):
         description="Largest mask contour in original image pixel coordinates"
     )
 
+
 class ClassificationInfo(BaseModel):
     """CNN classification result for one localized crop."""
 
@@ -357,16 +358,16 @@ class HybridRimInspector:
             localized.append(
                 LocalizedDefect(
                     localization=LocalizationInfo(
-    source="rim_yolo26s_seg_v1",
-    yolo_class_id=det.class_id,
-    yolo_defect_type=det.defect_type,
-    yolo_confidence=det.confidence,
-    bbox=det.bbox,
-    mask_status="available" if det.mask_available else "unavailable",
-    mask_area_pixels=det.mask_area_pixels,
-    mask_area_ratio=det.mask_area_ratio,
-    mask_polygon=det.mask_polygon,
-),
+                        source="rim_yolo26s_seg_v1",
+                        yolo_class_id=det.class_id,
+                        yolo_defect_type=det.defect_type,
+                        yolo_confidence=det.confidence,
+                        bbox=det.bbox,
+                        mask_status="available" if det.mask_available else "unavailable",
+                        mask_area_pixels=det.mask_area_pixels,
+                        mask_area_ratio=det.mask_area_ratio,
+                        mask_polygon=det.mask_polygon,
+                    ),
                     classification=ClassificationInfo(
                         source="rim_cnn_v1",
                         cnn_class_id=crop_cls.cnn_class_id,
