@@ -87,6 +87,9 @@ async def inspect_wheel(request: WheelInspectionRequest):
                         yolo_confidence=ld.localization.yolo_confidence,
                         bbox=ld.localization.bbox,
                         mask_status=ld.localization.mask_status,
+                        mask_area_pixels=ld.localization.mask_area_pixels,
+                        mask_area_ratio=ld.localization.mask_area_ratio,
+                        mask_polygon=ld.localization.mask_polygon,
                     ),
                     classification=HybridClassificationInfo(
                         source=ld.classification.source,

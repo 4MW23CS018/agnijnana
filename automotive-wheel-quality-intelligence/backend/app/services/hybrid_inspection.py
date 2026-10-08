@@ -66,13 +66,34 @@ class LocalizationInfo(BaseModel):
     source: str = Field(default="rim_yolo26s_seg_v1")
     yolo_class_id: int = Field(..., description="YOLO class ID (0–2)")
     yolo_defect_type: str = Field(..., description="YOLO defect label")
-    yolo_confidence: float = Field(..., ge=0.0, le=1.0, description="YOLO region confidence")
-    bbox: List[float] = Field(..., description="[x1, y1, x2, y2] in original pixel coords")
-    mask_status: str = Field(
-        default="pending",
-        description="'pending' — mask reconstruction not yet implemented; bbox is exact.",
+    yolo_confidence: float = Field(
+        ..., ge=0.0, le=1.0, description="YOLO region confidence"
     )
 
+    bbox: List[float] = Field(
+        ...,
+        description="[x1, y1, x2, y2] in original pixel coords"
+    )
+
+    mask_status: str = Field(
+        default="pending",
+        description="Instance segmentation mask reconstruction status"
+    )
+
+    mask_area_pixels: Optional[int] = Field(
+        default=None,
+        description="Foreground pixels in reconstructed instance mask"
+    )
+
+    mask_area_ratio: Optional[float] = Field(
+        default=None,
+        description="Mask area as percentage of full image area"
+    )
+
+    mask_polygon: Optional[List[List[float]]] = Field(
+        default=None,
+        description="Largest mask contour in original image pixel coordinates"
+    )
 
 class ClassificationInfo(BaseModel):
     """CNN classification result for one localized crop."""
@@ -336,13 +357,16 @@ class HybridRimInspector:
             localized.append(
                 LocalizedDefect(
                     localization=LocalizationInfo(
-                        source="rim_yolo26s_seg_v1",
-                        yolo_class_id=det.class_id,
-                        yolo_defect_type=det.defect_type,
-                        yolo_confidence=det.confidence,
-                        bbox=det.bbox,
-                        mask_status="pending",  # full mask reconstruction in next milestone
-                    ),
+    source="rim_yolo26s_seg_v1",
+    yolo_class_id=det.class_id,
+    yolo_defect_type=det.defect_type,
+    yolo_confidence=det.confidence,
+    bbox=det.bbox,
+    mask_status="available" if det.mask_available else "unavailable",
+    mask_area_pixels=det.mask_area_pixels,
+    mask_area_ratio=det.mask_area_ratio,
+    mask_polygon=det.mask_polygon,
+),
                     classification=ClassificationInfo(
                         source="rim_cnn_v1",
                         cnn_class_id=crop_cls.cnn_class_id,

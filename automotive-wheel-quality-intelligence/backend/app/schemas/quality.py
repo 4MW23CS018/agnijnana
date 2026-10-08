@@ -41,8 +41,28 @@ class HybridLocalizationInfo(BaseModel):
     yolo_class_id: int
     yolo_defect_type: str
     yolo_confidence: float = Field(..., ge=0.0, le=1.0)
-    bbox: List[float] = Field(..., description="[x1, y1, x2, y2] in original pixel coords")
+
+    bbox: List[float] = Field(
+        ...,
+        description="[x1, y1, x2, y2] in original pixel coords"
+    )
+
     mask_status: str = Field(default="pending")
+
+    mask_area_pixels: Optional[int] = Field(
+        default=None,
+        description="Foreground pixels in reconstructed instance mask"
+    )
+
+    mask_area_ratio: Optional[float] = Field(
+        default=None,
+        description="Mask area as percentage of full image area"
+    )
+
+    mask_polygon: Optional[List[List[float]]] = Field(
+        default=None,
+        description="Largest mask contour in original image pixel coordinates"
+    )
 
 
 class HybridClassificationInfo(BaseModel):

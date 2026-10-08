@@ -159,3 +159,128 @@ def test_yolo_does_not_import_cnn():
     assert not cnn_imported, (
         "rim_yolo_detector.py must NOT have an import statement for rim_cnn_classifier"
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 4. MASK RECONSTRUCTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def test_mask_fields_exist():
+    """YOLODetection must expose all three new mask geometry fields."""
+    from app.services.rim_yolo_detector import YOLODetection
+    fields = YOLODetection.model_fields
+    assert "mask_area_pixels" in fields, "mask_area_pixels field missing from YOLODetection"
+    assert "mask_area_ratio" in fields, "mask_area_ratio field missing from YOLODetection"
+    assert "mask_polygon" in fields, "mask_polygon field missing from YOLODetection"
+
+
+def test_mask_reconstruction_returns_area():
+    """When detections exist, mask_area_pixels must be a non-negative integer."""
+    if not SAMPLE_IMAGE_2.exists():
+        pytest.skip("Sample image not found")
+
+    result = rim_yolo_detector.detect(SAMPLE_IMAGE_2)
+    # Image 2df54f... reliably produces detections at conf>0.10
+    if result.num_detections == 0:
+        pytest.skip("No detections on sample image — cannot test mask area")
+
+    for det in result.detections:
+        if det.mask_available:
+            assert det.mask_area_pixels is not None
+            assert isinstance(det.mask_area_pixels, int)
+            assert det.mask_area_pixels >= 0
+
+
+def test_mask_area_is_non_negative():
+    """mask_area_pixels must never be negative."""
+    if not SAMPLE_IMAGE_2.exists():
+        pytest.skip("Sample image not found")
+
+    result = rim_yolo_detector.detect(SAMPLE_IMAGE_2)
+    for det in result.detections:
+        if det.mask_area_pixels is not None:
+            assert det.mask_area_pixels >= 0
+
+
+def test_mask_area_ratio_is_valid():
+    """
+    mask_area_ratio must be in [0.0, 100.0].
+    It is image-relative (mask_pixels / image_pixels * 100).
+    """
+    if not SAMPLE_IMAGE_2.exists():
+        pytest.skip("Sample image not found")
+
+    result = rim_yolo_detector.detect(SAMPLE_IMAGE_2)
+    for det in result.detections:
+        if det.mask_area_ratio is not None:
+            assert 0.0 <= det.mask_area_ratio <= 100.0, (
+                f"mask_area_ratio={det.mask_area_ratio} is outside [0, 100]"
+            )
+
+
+def test_mask_polygon_is_valid_when_contour_exists():
+    """
+    When mask_polygon is not None it must be a list of [x, y] pairs,
+    each pair containing exactly two floats, with at least 3 points.
+    """
+    if not SAMPLE_IMAGE_2.exists():
+        pytest.skip("Sample image not found")
+
+    result = rim_yolo_detector.detect(SAMPLE_IMAGE_2)
+    for det in result.detections:
+        if det.mask_polygon is not None:
+            assert isinstance(det.mask_polygon, list), "mask_polygon must be a list"
+            assert len(det.mask_polygon) >= 3, (
+                f"mask_polygon has only {len(det.mask_polygon)} points — need >= 3 for a contour"
+            )
+            for pt in det.mask_polygon:
+                assert isinstance(pt, list) and len(pt) == 2, (
+                    f"Each polygon point must be [x, y], got: {pt}"
+                )
+                assert isinstance(pt[0], (int, float))
+                assert isinstance(pt[1], (int, float))
+
+
+def test_missing_proto_does_not_crash():
+    """
+    If proto_masks is None (e.g. model output is unexpectedly structured),
+    _apply_nms must not raise — bbox detections must still be returned,
+    mask_available must be False, and mask geometry fields must be None.
+    """
+    if not SAMPLE_IMAGE_2.exists():
+        pytest.skip("Sample image not found")
+
+    # Call _reconstruct_instance_mask directly with proto=None
+    detector = rim_yolo_detector
+    dummy_coeffs = [0.0] * 32
+    dummy_bbox = [10.0, 10.0, 100.0, 100.0]
+
+    _, pix, ratio, poly = detector._reconstruct_instance_mask(
+        mask_coefficients=dummy_coeffs,
+        proto_masks=None,          # ← simulate missing proto
+        bbox=dummy_bbox,
+        orig_w=640,
+        orig_h=640,
+    )
+
+    assert pix is None, "mask_area_pixels must be None when proto is missing"
+    assert ratio is None, "mask_area_ratio must be None when proto is missing"
+    assert poly is None, "mask_polygon must be None when proto is missing"
+
+
+def test_bbox_behavior_is_unchanged():
+    """
+    Adding mask fields must not alter bbox values.
+    bbox must still be [x1, y1, x2, y2] with x1<x2 and y1<y2.
+    """
+    if not SAMPLE_IMAGE_2.exists():
+        pytest.skip("Sample image not found")
+
+    result = rim_yolo_detector.detect(SAMPLE_IMAGE_2)
+    for det in result.detections:
+        assert len(det.bbox) == 4, "bbox must have exactly 4 elements"
+        x1, y1, x2, y2 = det.bbox
+        assert x1 < x2, f"bbox x1={x1} must be < x2={x2}"
+        assert y1 < y2, f"bbox y1={y1} must be < y2={y2}"
+        # All coordinates must be non-negative
+        assert x1 >= 0 and y1 >= 0

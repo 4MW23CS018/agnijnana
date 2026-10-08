@@ -14,19 +14,21 @@ function pct(v) {
 }
 
 // ── Bounding-box overlay on the image canvas ───────────────────────────────
-function BBoxOverlay({ detections, imgNaturalSize, containerRect }) {
-  if (!detections?.length || !imgNaturalSize || !containerRect) return null;
+function BBoxOverlay({ detections, imgNaturalSize }) {
+  if (!detections?.length || !imgNaturalSize) return null;
   const { naturalW, naturalH, displayW, displayH } = imgNaturalSize;
   const scaleX = displayW / naturalW;
   const scaleY = displayH / naturalH;
 
   return (
     <svg
+      viewBox={`0 0 ${displayW} ${displayH}`}
+      preserveAspectRatio="none"
       style={{
         position: 'absolute',
-        top: 0, left: 0,
-        width: displayW,
-        height: displayH,
+        inset: 0,
+        width: '100%',
+        height: '100%',
         pointerEvents: 'none',
       }}
     >

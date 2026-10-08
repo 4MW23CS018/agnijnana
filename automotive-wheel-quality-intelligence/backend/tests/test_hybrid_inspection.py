@@ -417,7 +417,12 @@ def test_cnn_can_return_class_not_in_yolo_taxonomy():
 # ══════════════════════════════════════════════════════════════════════════════
 
 def test_mask_status_is_pending():
-    """Mask reconstruction is not yet implemented; mask_status must be 'pending'."""
+    """
+    mask_status must be one of the three valid states:
+        'available'   — mask reconstructed successfully
+        'unavailable' — reconstruction failed (proto absent/malformed); bbox still valid
+        'pending'     — legacy / mask reconstruction not yet attempted (kept for compatibility)
+    """
     if not SAMPLE_IMAGE.exists():
         pytest.skip("Sample image not found")
 
@@ -434,7 +439,10 @@ def test_mask_status_is_pending():
     inspector = HybridRimInspector(yolo_detector=mock_yolo)
     result = inspector.inspect(SAMPLE_IMAGE)
 
-    assert result.localized_defects[0].localization.mask_status == "pending"
+    status = result.localized_defects[0].localization.mask_status
+    assert status in ("available", "unavailable", "pending"), (
+        f"mask_status must be 'available', 'unavailable', or 'pending'; got '{status}'"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
