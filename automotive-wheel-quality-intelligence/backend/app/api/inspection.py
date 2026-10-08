@@ -1,34 +1,6 @@
-"""Wheel image upload and inspection API.
-
-Uploaded image files are persisted in Supabase Storage. Model inference still
-uses a temporary local copy when the requested image is stored remotely; that
-copy is removed after inference finishes.
-"""
-
-import asyncio
-import io
-import json
 import logging
-import os
-import tempfile
-import uuid
-
-import httpx
-from pathlib import Path
-from urllib.parse import unquote, urlparse
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
-from PIL import Image, UnidentifiedImageError
-
-try:
-    from dotenv import load_dotenv
-except ImportError:  # The API can start, but .env files will not be loaded.
-    load_dotenv = None
-
-try:
-    from supabase import create_client
-except ImportError:  # Give a useful API error instead of failing app startup.
-    create_client = None
 
 from app.schemas.quality import (
     HybridRimResult,
@@ -39,6 +11,7 @@ from app.schemas.quality import (
     WheelAIOutputContract,
     WheelInspectionRequest,
 )
+from app.services.image_service import save_wheel_image
 from app.services.hybrid_inspection import hybrid_inspector
 from app.services.inference import run_rim_cnn_inference_async
 from app.services.tyre_yolo_detector import tyre_yolo_detector
@@ -47,383 +20,24 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-# This file is backend/app/api/inspection.py, so parents[3] is the repository
-# root. The user's project keeps .env in that root directory.
-REPO_ROOT = Path(__file__).resolve().parents[3]
-BACKEND_ROOT = Path(__file__).resolve().parents[2]
-if load_dotenv is not None:
-    load_dotenv(REPO_ROOT / ".env", override=False)
-    load_dotenv(BACKEND_ROOT / ".env", override=False)
-
-_ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-_CONTENT_TYPES = {
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".png": "image/png",
-    ".webp": "image/webp",
-}
-_supabase_client = None
-
-
-def _bucket_name() -> str:
-    return os.getenv("SUPABASE_BUCKET", "wheel-images").strip() or "wheel-images"
-
-
-def _get_supabase_credentials() -> tuple[str, str]:
-    """Read server-side Supabase credentials, preferring a privileged backend key."""
-    supabase_url = (os.getenv("SUPABASE_URL") or "").strip()
-    # Prefer a secret/service-role key over a publishable/anon key. The latter
-    # is subject to Storage RLS policies and may not be allowed to upload.
-    supabase_key = (
-            os.getenv("SUPABASE_SECRET_KEY")
-            or os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-            or os.getenv("SUPABASE_KEY")
-            or os.getenv("SUPABASE_ANON_KEY")
-            or ""
-    ).strip()
-
-    if not supabase_url or not supabase_key:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=(
-                "Supabase is not configured. Set SUPABASE_URL and a server-side "
-                "SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY in the repository-root .env file."
-            ),
-        )
-    return supabase_url.rstrip("/"), supabase_key
-
-
-def _get_supabase_client():
-    """Create the Supabase client lazily so unrelated endpoints can still load."""
-    global _supabase_client
-
-    if _supabase_client is not None:
-        return _supabase_client
-
-    if create_client is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="The Supabase Python package is not installed. Run: python -m pip install supabase",
-        )
-
-    supabase_url, supabase_key = _get_supabase_credentials()
-    try:
-        _supabase_client = create_client(supabase_url, supabase_key)
-    except Exception as exc:
-        logger.exception("Could not initialise Supabase client")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Could not initialise the Supabase client. Check SUPABASE_URL and credentials.",
-        ) from exc
-
-    return _supabase_client
-
-
-def _normalize_optional_uuid(value, field_name: str) -> str | None:
-    """Return a canonical UUID for the predictions FK fields, or omit it.
-
-    The predictions schema declares machine_id and batch_id as UUID foreign keys.
-    Older clients may send non-UUID identifiers; omit those instead of causing an
-    invalid UUID cast. A valid UUID still must reference an existing row.
-    """
-    if value is None or str(value).strip() == "":
-        return None
-    try:
-        return str(uuid.UUID(str(value)))
-    except (ValueError, TypeError, AttributeError):
-        logger.warning(
-            "Omitting %s from predictions row because it is not a valid UUID: %r",
-            field_name, value,
-        )
-        return None
-
-
-async def _save_prediction_record(
-        *,
-        component: str,
-        image_path: str,
-        wheel_id: str | None,
-        machine_id: str | None,
-        batch_id: str | None,
-        defect_type: str | None,
-        probability,
-        model_version: str | None,
-        location=None,
-        details=None,
-) -> dict | None:
-    """Persist the completed model prediction to public.predictions.
-
-    The supplied table has no dedicated image_path or wheel_id columns, so these
-    are included in its existing explanation TEXT column as JSON. The image bytes
-    remain in Supabase Storage; this record links the result to the Storage path.
-    """
-    prediction_type = (str(defect_type).strip() if defect_type is not None else "")
-    if not prediction_type:
-        prediction_type = f"{component}_unknown"
-    prediction_type = prediction_type[:100]
-
-    try:
-        numeric_probability = float(probability) if probability is not None else None
-    except (TypeError, ValueError):
-        numeric_probability = None
-
-    explanation_payload = {
-        "component": component,
-        "wheel_id": str(wheel_id) if wheel_id is not None else None,
-        "image_path": image_path,
-        "location": location,
-        "details": details,
-    }
-    record = {
-        "prediction_type": prediction_type,
-        "probability": numeric_probability,
-        "model_version": (str(model_version)[:100] if model_version else None),
-        "explanation": json.dumps(explanation_payload, ensure_ascii=False, default=str),
-    }
-
-    normalized_machine_id = _normalize_optional_uuid(machine_id, "machine_id")
-    normalized_batch_id = _normalize_optional_uuid(batch_id, "batch_id")
-    if normalized_machine_id is not None:
-        record["machine_id"] = normalized_machine_id
-    if normalized_batch_id is not None:
-        record["batch_id"] = normalized_batch_id
-
-    def insert_row():
-        response = _get_supabase_client().table("predictions").insert(record).execute()
-        rows = getattr(response, "data", None) or []
-        return rows[0] if rows else None
-
-    try:
-        saved_row = await asyncio.to_thread(insert_row)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to save prediction to public.predictions")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=(
-                "The AI inspection completed, but saving its prediction to the "
-                "Supabase predictions table failed. Check table permissions/RLS, "
-                "and verify that machine_id and batch_id reference existing UUID rows."
-            ),
-        ) from exc
-
-    logger.info(
-        "Saved prediction row to public.predictions (id=%s, type=%s)",
-        (saved_row or {}).get("id") if isinstance(saved_row, dict) else None,
-        prediction_type,
-    )
-    return saved_row
-
-
-def _cleanup_temporary_file(path: str | None, is_temporary: bool) -> None:
-    if not is_temporary or not path:
-        return
-    try:
-        Path(path).unlink(missing_ok=True)
-    except OSError:
-        logger.warning("Could not remove temporary inspection image: %s", path, exc_info=True)
-
-
-def _local_image_candidate(image_reference: str) -> Path | None:
-    """Return a matching existing local file, supporting old API callers."""
-    parsed = urlparse(image_reference)
-    if parsed.scheme in {"http", "https"}:
-        return None
-
-    path = Path(image_reference).expanduser()
-    candidates = [path] if path.is_absolute() else [
-        Path.cwd() / path,
-        BACKEND_ROOT / path,
-        REPO_ROOT / path,
-        ]
-    for candidate in candidates:
-        try:
-            if candidate.is_file():
-                return candidate.resolve()
-        except OSError:
-            continue
-    return None
-
-
-def _storage_object_path(image_reference: str) -> str:
-    """Convert a bucket object path or Supabase Storage URL to an object path."""
-    bucket = _bucket_name()
-    parsed = urlparse(image_reference)
-
-    if parsed.scheme in {"http", "https"}:
-        segments = [unquote(part) for part in parsed.path.split("/") if part]
-        # Examples: /storage/v1/object/public/<bucket>/<object>
-        #           /storage/v1/object/sign/<bucket>/<object>
-        for index, segment in enumerate(segments):
-            if segment in {"public", "sign", "authenticated"} and index + 1 < len(segments):
-                if segments[index + 1] == bucket:
-                    object_parts = segments[index + 2 :]
-                    if object_parts:
-                        return "/".join(object_parts)
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The supplied image URL is not a recognised URL for the configured Supabase Storage bucket.",
-        )
-
-    reference = unquote(image_reference).replace("\\", "/").strip().lstrip("/")
-    bucket_prefix = f"{bucket}/"
-    if reference.startswith(bucket_prefix):
-        reference = reference[len(bucket_prefix) :]
-    if not reference:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="image_path must contain a Supabase Storage object path.",
-        )
-    return reference
-
-
-async def _get_local_image_for_inspection(image_reference: str) -> tuple[str, bool]:
-    """Resolve local paths directly or download a Storage object to a temp file."""
-    local_candidate = _local_image_candidate(image_reference)
-    if local_candidate is not None:
-        return str(local_candidate), False
-
-    object_path = _storage_object_path(image_reference)
-    client = _get_supabase_client()
-
-    try:
-        image_bytes = await asyncio.to_thread(
-            client.storage.from_(_bucket_name()).download,
-            object_path,
-        )
-        if not isinstance(image_bytes, (bytes, bytearray)):
-            image_bytes = bytes(image_bytes)
-        if not image_bytes:
-            raise ValueError("The downloaded Storage object is empty.")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.exception("Failed to download image from Supabase Storage: %s", object_path)
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=(
-                "Could not find or download image_path locally or in Supabase Storage. "
-                "Use the image_path returned by POST /api/inspection/upload and verify the bucket and permissions."
-            ),
-        ) from exc
-
-    suffix = Path(object_path).suffix.lower()
-    if suffix not in _ALLOWED_EXTENSIONS:
-        suffix = ".img"
-
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile(mode="wb", suffix=suffix, delete=False) as temporary_file:
-            temporary_file.write(image_bytes)
-            temporary_file.flush()
-            temporary_path = temporary_file.name
-    except Exception:
-        _cleanup_temporary_file(temporary_path, True)
-        raise
-
-    return temporary_path, True
-
 
 @router.post(
     "/upload",
     status_code=status.HTTP_201_CREATED,
-    summary="Upload an aluminium wheel image to Supabase Storage",
+    summary="Upload an aluminium wheel image",
 )
-async def upload_wheel_image(image: UploadFile = File(...)):
-    """Validate the uploaded image and persist it in the configured Supabase bucket."""
-    filename = image.filename or "wheel-image"
-    extension = Path(filename).suffix.lower()
-    if extension not in _ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Unsupported image format. Upload a JPG, JPEG, PNG, or WEBP image.",
-        )
+async def upload_wheel_image(
+    image: UploadFile = File(...),
+):
+    """
+    Upload and validate an aluminium wheel image using PIL verification.
+    """
+    image_path = await save_wheel_image(image)
 
-    contents = await image.read()
-    if not contents:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The uploaded image is empty.",
-        )
-
-    # Validate actual image bytes; do not trust the filename or Content-Type alone.
-    try:
-        with Image.open(io.BytesIO(contents)) as uploaded_image:
-            uploaded_image.verify()
-    except (UnidentifiedImageError, OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The uploaded file is not a valid image.",
-        ) from exc
-
-    # Validate configuration before making the Storage request. Use the REST
-    # endpoint with the image bytes in memory: this avoids creating a local copy
-    # and avoids Windows file-lock errors when a failed SDK upload leaves a handle open.
-    supabase_url, supabase_key = _get_supabase_credentials()
-    bucket = _bucket_name()
-    object_path = f"inspections/{uuid.uuid4().hex}{extension}"
-    content_type = _CONTENT_TYPES[extension]
-    object_url = (
-        f"{supabase_url}/storage/v1/object/"
-        f"{bucket}/{object_path}"
-    )
-    headers = {
-        "apikey": supabase_key,
-        "Authorization": f"Bearer {supabase_key}",
-        "x-upsert": "false",
-    }
-
-    try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as http_client:
-            response = await http_client.post(
-                object_url,
-                headers=headers,
-                files={"file": (filename, contents, content_type)},
-            )
-
-        if response.is_error:
-            response_detail = response.text[:1000]
-            logger.error(
-                "Supabase Storage rejected upload: status=%s response=%s",
-                response.status_code,
-                response_detail,
-            )
-            if response.status_code in (401, 403):
-                raise HTTPException(
-                    status_code=status.HTTP_502_BAD_GATEWAY,
-                    detail=(
-                        "Supabase rejected the upload (401/403). Configure a valid "
-                        "SUPABASE_SECRET_KEY or SUPABASE_SERVICE_ROLE_KEY in the backend .env, "
-                        "or review the bucket's Storage INSERT RLS policy. Keep secret keys backend-only."
-                    ),
-                )
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Supabase Storage upload failed with HTTP {response.status_code}: {response_detail}",
-            )
-    except HTTPException:
-        raise
-    except httpx.HTTPError as exc:
-        logger.exception("Network error while uploading %s to Supabase Storage", filename)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Could not connect to Supabase Storage. Check SUPABASE_URL and network connectivity.",
-        ) from exc
-    except Exception as exc:
-        logger.exception("Unexpected Supabase Storage upload failure for %s", filename)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Supabase Storage upload failed. Check credentials, bucket name, and Storage permissions.",
-        ) from exc
-
-    logger.info("Uploaded wheel image to Supabase Storage bucket=%s path=%s", bucket, object_path)
     return {
-        "filename": filename,
-        "image_path": object_path,
-        "storage_bucket": bucket,
-        "image_url": None,
-        "message": "Wheel image uploaded successfully to Supabase Storage",
+        "filename": image.filename,
+        "image_path": image_path,
+        "message": "Wheel image uploaded successfully",
     }
 
 
@@ -456,21 +70,18 @@ async def inspect_wheel(request: WheelInspectionRequest):
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Tyre YOLO detection service is not available",
             )
-        local_image_path, is_temporary = await _get_local_image_for_inspection(request.image_path)
         try:
-            tyre_result = await tyre_yolo_detector.detect_async(local_image_path)
+            tyre_result = await tyre_yolo_detector.detect_async(request.image_path)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         except RuntimeError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
         except Exception as exc:
             logger.error("Tyre inspection failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Tyre inspection internal failure",
-            ) from exc
-        finally:
-            _cleanup_temporary_file(local_image_path, is_temporary)
+            )
 
         top_defect = None
         top_confidence = None
@@ -480,20 +91,6 @@ async def inspect_wheel(request: WheelInspectionRequest):
             top_defect = top_det.class_name
             top_confidence = top_det.confidence
             top_bbox = top_det.bbox
-
-        tyre_details = tyre_result.model_dump()
-        await _save_prediction_record(
-            component="tyre",
-            image_path=request.image_path,
-            wheel_id=request.wheel_id,
-            machine_id=request.machine_id,
-            batch_id=request.batch_id,
-            defect_type=top_defect,
-            probability=top_confidence,
-            model_version=getattr(tyre_result, "model", None) or "tyre_yolo",
-            location=top_bbox,
-            details=tyre_details,
-        )
 
         return WheelAIOutputContract(
             wheel_id=request.wheel_id,
@@ -516,21 +113,18 @@ async def inspect_wheel(request: WheelInspectionRequest):
 
     # ── Rim Inspection Path (Hybrid YOLO + CNN) ──────────────────────────────
     if hybrid_inspector.is_ready:
-        local_image_path, is_temporary = await _get_local_image_for_inspection(request.image_path)
         try:
-            hybrid_result = await hybrid_inspector.inspect_async(local_image_path)
+            hybrid_result = await hybrid_inspector.inspect_async(request.image_path)
         except ValueError as exc:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
         except RuntimeError as exc:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
         except Exception as exc:
             logger.error("Hybrid inspection failed: %s", exc, exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Hybrid inspection internal failure",
-            ) from exc
-        finally:
-            _cleanup_temporary_file(local_image_path, is_temporary)
+            )
 
         # Map internal service types → API schema types
         api_localized = []
@@ -598,19 +192,6 @@ async def inspect_wheel(request: WheelInspectionRequest):
                 device=fic.get("device", "cpu"),
             )
 
-        await _save_prediction_record(
-            component="rim",
-            image_path=request.image_path,
-            wheel_id=request.wheel_id,
-            machine_id=request.machine_id,
-            batch_id=request.batch_id,
-            defect_type=top_defect,
-            probability=top_confidence,
-            model_version=hybrid_api.model,
-            location=top_bbox,
-            details=hybrid_api.model_dump(),
-        )
-
         return WheelAIOutputContract(
             wheel_id=request.wheel_id,
             batch_id=request.batch_id,
@@ -632,11 +213,7 @@ async def inspect_wheel(request: WheelInspectionRequest):
 
     # ── Fallback: CNN-only (hybrid not ready) ──────────────────────────────────
     logger.warning("Hybrid inspector not ready — falling back to CNN-only inspection")
-    local_image_path, is_temporary = await _get_local_image_for_inspection(request.image_path)
-    try:
-        cnn_pred = await run_rim_cnn_inference_async(local_image_path)
-    finally:
-        _cleanup_temporary_file(local_image_path, is_temporary)
+    cnn_pred = await run_rim_cnn_inference_async(request.image_path)
 
     rim_result = RimCNNResult(
         model=cnn_pred.model,
@@ -645,23 +222,6 @@ async def inspect_wheel(request: WheelInspectionRequest):
         confidence=cnn_pred.confidence,
         inference_ms=cnn_pred.inference_ms,
         device=cnn_pred.device,
-    )
-
-    await _save_prediction_record(
-        component="rim",
-        image_path=request.image_path,
-        wheel_id=request.wheel_id,
-        machine_id=request.machine_id,
-        batch_id=request.batch_id,
-        defect_type=cnn_pred.defect_type,
-        probability=cnn_pred.confidence,
-        model_version=cnn_pred.model,
-        location=None,
-        details={
-            "class_id": cnn_pred.class_id,
-            "inference_ms": cnn_pred.inference_ms,
-            "device": cnn_pred.device,
-        },
     )
 
     return WheelAIOutputContract(
