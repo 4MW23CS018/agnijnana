@@ -397,14 +397,21 @@ export default function WheelInspection() {
             ) : (
               /* ── Rim Results Display ────────────────── */
               <>
-                {/* Primary Classification */}
+                {/* Primary Classification & Severity */}
                 <div>
                   <div style={{ fontSize: '0.7rem', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.6rem' }}>
-                    Classification Result
+                    Classification & Severity Assessment
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem' }}>
                     <Stat label="Defect" value={rimPrimaryDefect?.toUpperCase()} large accent="#f43f5e" />
-                    <Stat label="CNN Confidence" value={pct(rimPrimaryConf)} large accent="#38bdf8" />
+                    <Stat
+                      label="Severity Level"
+                      value={result?.severity ?? 'Uncertain'}
+                      large
+                      accent={result?.severity === 'Critical' ? '#ef4444' : (result?.severity === 'Low' ? '#22c55e' : '#94a3b8')}
+                    />
+                    <Stat label="Severity Score" value={result?.severity_score !== undefined && result?.severity_score !== null ? `${result.severity_score}/100` : '—'} />
+                    <Stat label="CNN Confidence" value={pct(rimPrimaryConf)} accent="#38bdf8" />
                     <Stat label="Latency (YOLO)" value={yoloMs !== undefined ? `${yoloMs} ms` : '—'} />
                     <Stat label="Latency (CNN)" value={cnnMs !== undefined ? `${cnnMs} ms` : '—'} />
                     <Stat label="Total Hybrid" value={totalMs !== undefined ? `${totalMs} ms` : '—'} />
@@ -412,10 +419,26 @@ export default function WheelInspection() {
                   </div>
                 </div>
 
+                {/* Severity Rationale Callout Box */}
+                {result?.severity_rationale && (
+                  <div style={{
+                    padding: '0.75rem 1rem',
+                    backgroundColor: result.severity === 'Critical' ? 'rgba(153, 27, 27, 0.25)' : 'rgba(15, 23, 42, 0.8)',
+                    border: `1px solid ${result.severity === 'Critical' ? '#991b1b' : '#334155'}`,
+                    borderRadius: '6px',
+                    fontSize: '0.8rem',
+                    color: '#e2e8f0',
+                    lineHeight: '1.4',
+                  }}>
+                    <strong style={{ color: result.severity === 'Critical' ? '#fca5a5' : '#38bdf8' }}>Severity Rationale: </strong>
+                    {result.severity_rationale}
+                  </div>
+                )}
+
                 {/* Localization section */}
                 <div style={{ borderTop: '1px solid #1e293b', paddingTop: '0.75rem' }}>
                   <div style={{ fontSize: '0.7rem', fontWeight: '700', color: '#94a3b8', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.6rem' }}>
-                    YOLO Localization
+                    YOLO Localization & Regional Severity
                   </div>
 
                   {rimLocStatus === 'no_yolo_detection' ? (
@@ -529,19 +552,33 @@ function DetectionCard({ ld, index }) {
           {cls.inference_ms} ms · {cls.device?.toUpperCase()}
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center' }}>
-        <span style={{
-          fontSize: '0.68rem', fontWeight: '700',
-          padding: '0.2rem 0.5rem', borderRadius: '4px',
-          backgroundColor: agreed ? '#14532d' : '#7c2d12',
-          color: agreed ? '#86efac' : '#fed7aa',
-        }}>
-          {agreed ? '✓ AGREE' : '⚠ DISAGREE'}
-        </span>
-        {!agreed && (
-          <span style={{ marginLeft: '0.4rem', fontSize: '0.66rem', color: '#78716c' }}>
-            YOLO:{loc.yolo_defect_type} ≠ CNN:{cls.cnn_defect_type}
+      <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', gap: '0.3rem' }}>
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          <span style={{
+            fontSize: '0.68rem', fontWeight: '700',
+            padding: '0.2rem 0.5rem', borderRadius: '4px',
+            backgroundColor: agreed ? '#14532d' : '#7c2d12',
+            color: agreed ? '#86efac' : '#fed7aa',
+          }}>
+            {agreed ? '✓ AGREE' : '⚠ DISAGREE'}
           </span>
+          {!agreed && (
+            <span style={{ marginLeft: '0.4rem', fontSize: '0.66rem', color: '#78716c' }}>
+              YOLO:{loc.yolo_defect_type} ≠ CNN:{cls.cnn_defect_type}
+            </span>
+          )}
+        </div>
+        {ld.severity_level && (
+          <div>
+            <span style={{
+              fontSize: '0.68rem', fontWeight: '700',
+              padding: '0.15rem 0.5rem', borderRadius: '4px',
+              backgroundColor: ld.severity_level === 'Critical' ? '#991b1b' : '#14532d',
+              color: ld.severity_level === 'Critical' ? '#fca5a5' : '#86efac',
+            }}>
+              Severity: {ld.severity_level} ({ld.severity_score}/100)
+            </span>
+          </div>
         )}
       </div>
     </div>

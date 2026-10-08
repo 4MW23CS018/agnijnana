@@ -4,30 +4,34 @@
 # ============================================================
 
 """
-Prototype severity engine for the Singularity 2026 hackathon.
+Severity Engine for Automotive Alloy Wheel Inspection.
 
-IMPORTANT:
-These scores and thresholds are prototype assumptions for
-hackathon/demo purposes. They are NOT manufacturer-certified
-safety limits.
+Provides deterministic, explainable severity assessment for detected rim defects.
 
-Severity is calculated from:
-    1. Base defect severity
-    2. Defect area ratio
-    3. Morphology
+PROVISIONAL ENGINEERING ASSUMPTIONS:
+- Base severity scores reflect physical structural risk categories:
+  - Critical structural defects: crack (75), incomplete_welding (70), bent_rim (65), blow_hole (60)
+  - Cosmetic/surface defects: scratch (15), scuff (20), paint_damage (20), porosity (55)
+- Severity levels:
+  - Score >= 70 -> 'Critical' (endangers wheel structural integrity / vehicle safety)
+  - Score < 70 -> 'Low' (cosmetic or minor surface defect)
+- AI detection confidence is kept strictly separate from physical defect severity.
+- Instance mask area ratio is used only when valid and available.
+  Bounding box area is NOT used as actual defect area.
 
-AI confidence is NOT used to calculate physical severity.
-It is used separately when calculating inspection priority.
+NOTE: These rules are provisional engineering heuristics for demonstration purposes,
+not manufacturer-certified automotive safety standards.
 """
 
 from __future__ import annotations
 
-from typing import Literal
+import logging
+from typing import Any, Dict, Optional
 
+logger = logging.getLogger(__name__)
 
-# ------------------------------------------------------------
-# 1. BASE SEVERITY BY DEFECT TYPE
-# ------------------------------------------------------------
+# Centralized Thresholds & Base Severities
+CRITICAL_SEVERITY_THRESHOLD: int = 70
 
 BASE_SEVERITY: dict[str, int] = {
     "bent_rim": 65,
@@ -47,11 +51,6 @@ BASE_SEVERITY: dict[str, int] = {
     "mixed_porosity_blowhole": 65,
 }
 
-
-# ------------------------------------------------------------
-# 2. MORPHOLOGY MODIFIER
-# ------------------------------------------------------------
-
 MORPHOLOGY_MODIFIER: dict[str, int] = {
     "minor": 0,
     "moderate": 8,
@@ -59,186 +58,160 @@ MORPHOLOGY_MODIFIER: dict[str, int] = {
 }
 
 
-# ------------------------------------------------------------
-# 3. SIZE MODIFIER
-# ------------------------------------------------------------
-
 def calculate_size_modifier(area_ratio: float) -> int:
     """
-    Calculate severity contribution from defect area.
+    Calculate severity contribution from defect mask area.
 
-    area_ratio is expressed as percentage of the component/image
-    area occupied by the detected defect.
+    area_ratio: percentage of image occupied by reconstructed defect instance mask.
 
-    Prototype assumptions:
-        <= 0.5  -> 0
-        <= 1.0  -> 5
-        <= 2.0  -> 8
-        >  2.0  -> 6 * area_ratio
-
-    The result is capped at 25.
-
-    This reproduces the supplied examples:
-        0.3 -> 0
-        1.2 -> 8
-        3.0 -> 18
+    Rules:
+        <= 0.5%  -> 0
+        <= 1.0%  -> 5
+        <= 2.0%  -> 8
+        >  2.0%  -> round(area_ratio * 6), capped at 25.
     """
-
     if area_ratio < 0:
-        raise ValueError("area_ratio cannot be negative")
+        return 0
 
     if area_ratio <= 0.5:
         return 0
-
     if area_ratio <= 1.0:
         return 5
-
     if area_ratio <= 2.0:
         return 8
 
     return min(25, round(area_ratio * 6))
 
 
-# ------------------------------------------------------------
-# 4. SEVERITY LEVEL
-# ------------------------------------------------------------
-
-def severity_level_from_score(score: int) -> str:
+def severity_level_from_score(score: int, mode: str = "binary") -> str:
     """
-    Convert numerical severity score into dashboard level.
+    Convert numerical severity score into severity level.
+
+    mode='binary' (default):
+        score >= 70 -> 'Critical'
+        score < 70  -> 'Low'
+
+    mode='tiered':
+        score >= 90 -> 'Critical'
+        score >= 70 -> 'High'
+        score >= 40 -> 'Medium'
+        score < 40  -> 'Low'
     """
+    if mode == "tiered":
+        if score >= 90:
+            return "Critical"
+        if score >= 70:
+            return "High"
+        if score >= 40:
+            return "Medium"
+        return "Low"
 
-    if score >= 90:
-        return "Critical"
+    # Default binary mode required by project specification (Low vs Critical)
+    return "Critical" if score >= CRITICAL_SEVERITY_THRESHOLD else "Low"
 
-    if score >= 70:
-        return "High"
-
-    if score >= 40:
-        return "Medium"
-
-    return "Low"
-
-
-# ------------------------------------------------------------
-# 5. MAIN SEVERITY CALCULATION
-# ------------------------------------------------------------
 
 def calculate_severity(
     defect_type: str,
-    area_ratio: float = 0.0,
+    area_ratio: Optional[float] = None,
+    mask_status: Optional[str] = None,
     morphology: str = "minor",
-) -> dict:
+    confidence: Optional[float] = None,
+    level_mode: str = "binary",
+) -> dict[str, Any]:
     """
-    Calculate prototype defect severity.
+    Calculate defect severity level, score, and transparent rationale.
 
-    Parameters
-    ----------
-    defect_type:
-        Normalized defect class.
+    Confidence is kept strictly separate from severity calculation.
 
-    area_ratio:
-        Defect area ratio / percentage used by the prototype
-        severity calculation.
-
-    morphology:
-        One of:
-            minor
-            moderate
-            severe
-
-    Returns
-    -------
-    dict containing:
-        defect_type
-        base_score
-        size_modifier
-        morphology_modifier
-        severity_score
-        severity_level
+    Returns dict with:
+        defect_type, base_score, size_modifier, morphology_modifier,
+        raw_score, severity_score, severity_level, rationale,
+        mask_evidence_available
     """
+    clean_defect = (defect_type or "").strip().lower()
+    clean_morph = (morphology or "minor").strip().lower()
 
-    defect_type = defect_type.strip().lower()
-    morphology = morphology.strip().lower()
+    if clean_defect not in BASE_SEVERITY:
+        # Unknown or unsupported defect class — handle safely with explicit uncertainty
+        return {
+            "defect_type": defect_type,
+            "base_score": 0,
+            "size_modifier": 0,
+            "morphology_modifier": 0,
+            "raw_score": 0,
+            "severity_score": 0,
+            "severity_level": "Uncertain",
+            "rationale": f"Unknown defect class '{defect_type}'. Physical severity cannot be reliably assessed.",
+            "mask_evidence_available": False,
+        }
 
-    if defect_type not in BASE_SEVERITY:
-        raise ValueError(
-            f"Unknown defect type: '{defect_type}'. "
-            f"Supported types: {sorted(BASE_SEVERITY)}"
-        )
+    base_score = BASE_SEVERITY[clean_defect]
+    morph_modifier = MORPHOLOGY_MODIFIER.get(clean_morph, 0)
 
-    if morphology not in MORPHOLOGY_MODIFIER:
-        raise ValueError(
-            f"Unknown morphology: '{morphology}'. "
-            f"Supported values: {sorted(MORPHOLOGY_MODIFIER)}"
-        )
-
-    base_score = BASE_SEVERITY[defect_type]
-
-    size_modifier = calculate_size_modifier(area_ratio)
-
-    morphology_modifier = MORPHOLOGY_MODIFIER[morphology]
-
-    raw_score = (
-        base_score
-        + size_modifier
-        + morphology_modifier
+    # Instance mask evidence evaluation
+    mask_valid = (
+        mask_status == "available"
+        and area_ratio is not None
+        and isinstance(area_ratio, (int, float))
+        and area_ratio >= 0
     )
 
-    severity_score = min(100, raw_score)
+    if mask_valid:
+        size_modifier = calculate_size_modifier(area_ratio)
+        mask_evidence_note = f"Instance mask area ratio: {area_ratio:.4f}% (+{size_modifier} pts)."
+    else:
+        size_modifier = 0
+        mask_evidence_note = "Instance mask unavailable; size modifier omitted (bbox area not used as physical mask area)."
 
-    severity_level = severity_level_from_score(severity_score)
+    raw_score = base_score + size_modifier + morph_modifier
+    severity_score = min(100, max(0, raw_score))
+    severity_level = severity_level_from_score(severity_score, mode=level_mode)
+
+    # Construct transparent human-readable explanation
+    rationale_parts = [
+        f"Defect '{clean_defect}' base structural risk: {base_score}/100.",
+        mask_evidence_note,
+    ]
+    if morph_modifier > 0:
+        rationale_parts.append(f"Morphology '{clean_morph}' (+{morph_modifier} pts).")
+
+    if confidence is not None:
+        rationale_parts.append(f"AI detection confidence: {confidence * 100:.1f}% (kept separate from physical severity).")
+
+    rationale_parts.append(f"Calculated severity score: {severity_score}/100 → Level: {severity_level}.")
 
     return {
-        "defect_type": defect_type,
+        "defect_type": clean_defect,
         "base_score": base_score,
         "size_modifier": size_modifier,
-        "morphology_modifier": morphology_modifier,
+        "morphology_modifier": morph_modifier,
         "raw_score": raw_score,
         "severity_score": severity_score,
         "severity_level": severity_level,
+        "rationale": " ".join(rationale_parts),
+        "mask_evidence_available": mask_valid,
     }
 
-
-# ------------------------------------------------------------
-# 6. INSPECTION PRIORITY
-# ------------------------------------------------------------
 
 def inspection_priority(
     severity_score: int,
     confidence: float,
 ) -> dict:
-    """
-    Determine inspection priority.
-
-    Severity determines the physical risk category.
-    Model confidence determines how confidently the AI has
-    identified the defect.
-
-    Confidence does NOT change the severity score.
-    """
-
+    """Determine inspection priority based on severity score and model confidence."""
     if not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence must be between 0.0 and 1.0")
 
     if not 0 <= severity_score <= 100:
         raise ValueError("severity_score must be between 0 and 100")
 
-    if severity_score >= 90:
+    if severity_score >= 70:
         priority = "CRITICAL"
-    elif severity_score >= 70:
-        priority = "HIGH"
     elif severity_score >= 40:
-        priority = "MEDIUM"
+        priority = "HIGH"
     else:
         priority = "LOW"
 
-    # Low-confidence predictions should be manually reviewed,
-    # even when their calculated severity is relatively low.
-    if confidence < 0.60:
-        review_required = True
-    else:
-        review_required = False
+    review_required = confidence < 0.60
 
     return {
         "priority": priority,

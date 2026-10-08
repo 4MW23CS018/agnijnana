@@ -15,6 +15,7 @@ from app.services.image_service import save_wheel_image
 from app.services.hybrid_inspection import hybrid_inspector
 from app.services.inference import run_rim_cnn_inference_async
 from app.services.tyre_yolo_detector import tyre_yolo_detector
+from app.services.severity_engine import calculate_severity
 
 logger = logging.getLogger(__name__)
 
@@ -103,6 +104,8 @@ async def inspect_wheel(request: WheelInspectionRequest):
             defect_type=top_defect,
             location=top_bbox,
             severity=None,
+            severity_score=None,
+            severity_rationale=None,
             defect_confidence=top_confidence,
             root_cause=None,
             root_cause_confidence=None,
@@ -126,9 +129,15 @@ async def inspect_wheel(request: WheelInspectionRequest):
                 detail="Hybrid inspection internal failure",
             )
 
-        # Map internal service types → API schema types
+        # Map internal service types → API schema types & calculate severity per defect
         api_localized = []
         for ld in hybrid_result.localized_defects:
+            loc_sev = calculate_severity(
+                defect_type=ld.classification.cnn_defect_type,
+                area_ratio=ld.localization.mask_area_ratio,
+                mask_status=ld.localization.mask_status,
+                confidence=ld.classification.cnn_confidence,
+            )
             api_localized.append(
                 HybridLocalizedDefect(
                     localization=HybridLocalizationInfo(
@@ -151,6 +160,9 @@ async def inspect_wheel(request: WheelInspectionRequest):
                         device=ld.classification.device,
                     ),
                     classification_agreement=ld.classification_agreement,
+                    severity_level=loc_sev["severity_level"],
+                    severity_score=loc_sev["severity_score"],
+                    severity_rationale=loc_sev["rationale"],
                 )
             )
 
@@ -166,19 +178,28 @@ async def inspect_wheel(request: WheelInspectionRequest):
             full_image_cnn=hybrid_result.full_image_cnn,
         )
 
-        # Determine top-level defect_type and confidence for backward-compat fields
-        # Priority: first localized CNN defect → full-image CNN fallback
+        # Determine top-level defect_type, confidence, and primary severity
         fic = hybrid_result.full_image_cnn or {}
         if api_localized:
             top = api_localized[0].classification
             top_defect = top.cnn_defect_type
             top_confidence = top.cnn_confidence
-            # Location is the first YOLO bbox
             top_bbox = api_localized[0].localization.bbox
+            top_sev = calculate_severity(
+                defect_type=top_defect,
+                area_ratio=api_localized[0].localization.mask_area_ratio,
+                mask_status=api_localized[0].localization.mask_status,
+                confidence=top_confidence,
+            )
         else:
-            top_defect = fic.get("defect_type")
-            top_confidence = fic.get("confidence")
+            top_defect = fic.get("defect_type", "unknown")
+            top_confidence = fic.get("confidence", 0.0)
             top_bbox = None
+            top_sev = calculate_severity(
+                defect_type=top_defect,
+                mask_status="unavailable",
+                confidence=top_confidence,
+            )
 
         # Legacy rim field: use full-image CNN result
         rim_legacy = None
@@ -202,7 +223,9 @@ async def inspect_wheel(request: WheelInspectionRequest):
             tyre=None,
             defect_type=top_defect,
             location=top_bbox,
-            severity=None,
+            severity=top_sev["severity_level"],
+            severity_score=top_sev["severity_score"],
+            severity_rationale=top_sev["rationale"],
             defect_confidence=top_confidence,
             root_cause=None,
             root_cause_confidence=None,
@@ -224,6 +247,12 @@ async def inspect_wheel(request: WheelInspectionRequest):
         device=cnn_pred.device,
     )
 
+    fallback_sev = calculate_severity(
+        defect_type=cnn_pred.defect_type,
+        mask_status="unavailable",
+        confidence=cnn_pred.confidence,
+    )
+
     return WheelAIOutputContract(
         wheel_id=request.wheel_id,
         batch_id=request.batch_id,
@@ -234,7 +263,9 @@ async def inspect_wheel(request: WheelInspectionRequest):
         tyre=None,
         defect_type=cnn_pred.defect_type,
         location=None,
-        severity=None,
+        severity=fallback_sev["severity_level"],
+        severity_score=fallback_sev["severity_score"],
+        severity_rationale=fallback_sev["rationale"],
         defect_confidence=cnn_pred.confidence,
         root_cause=None,
         root_cause_confidence=None,
@@ -256,6 +287,8 @@ def get_inspection(wheel_id: str):
         defect_type=None,
         location=None,
         severity=None,
+        severity_score=None,
+        severity_rationale=None,
         defect_confidence=None,
         root_cause=None,
         root_cause_confidence=None,
