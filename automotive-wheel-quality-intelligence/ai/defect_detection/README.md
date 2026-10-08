@@ -1,7 +1,7 @@
 # Aluminium Wheel Defect Detection & Localization Module
 
 ## 1. Module Overview
-- **Owner**: Vijeath (Data + AI/ML Lead)
+- **Owner**: Vijeth (Data + AI/ML Lead)
 - **Purpose**: Detect, classify, and localize casting/surface defects on aluminium alloy automotive wheels and rims using computer vision.
 - **Current Status**: SKELETON / FOUNDATION PHASE — No models trained or downloaded.
 
