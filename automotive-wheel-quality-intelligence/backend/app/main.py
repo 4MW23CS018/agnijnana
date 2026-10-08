@@ -1,5 +1,8 @@
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+
 from app.core.config import settings
 from app.schemas.quality import HealthResponse
 from app.api import (
@@ -19,6 +22,12 @@ app = FastAPI(
     version="0.1.0",
 )
 
+# Mount static uploads directory for serving uploaded wheel images
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+UPLOADS_PATH = PROJECT_ROOT / "data" / "uploads"
+UPLOADS_PATH.mkdir(parents=True, exist_ok=True)
+app.mount("/data/uploads", StaticFiles(directory=str(UPLOADS_PATH)), name="uploads")
+
 # CORS configuration
 app.add_middleware(
     CORSMiddleware,
@@ -27,6 +36,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 @app.get(
     "/health",
@@ -41,6 +51,7 @@ def health_check():
         service="Aluminium Wheel Quality Intelligence Backend",
         version="0.1.0",
     )
+
 
 # Include API routers
 app.include_router(inspection.router, prefix="/api/inspection", tags=["Wheel Inspection"])
