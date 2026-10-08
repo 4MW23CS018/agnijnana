@@ -1,15 +1,24 @@
-"""
-Database engine and session setup placeholder.
-Database Lead (Deepak) will finalize ORM connection pools after DB provisioning.
-"""
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+
 from app.core.config import settings
 
-# Placeholder dependency for FastAPI endpoints
+
+engine = create_engine(
+    settings.DATABASE_URL,
+    pool_pre_ping=True,
+)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
+
+
 def get_db():
-    """Yield database session placeholder."""
-    # TODO — DECISION REQUIRED: Initialize SQLAlchemy sessionmaker with settings.DATABASE_URL
-    db = None
+    db: Session = SessionLocal()
     try:
         yield db
     finally:
-        pass
+        db.close()

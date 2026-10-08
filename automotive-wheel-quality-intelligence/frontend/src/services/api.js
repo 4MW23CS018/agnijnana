@@ -13,6 +13,45 @@ export async function fetchHealth() {
   return response.json();
 }
 
+export async function uploadWheelImage(file) {
+  const formData = new FormData();
+  formData.append('image', file);
+
+  const response = await fetch(`${API_BASE_URL}/api/inspection/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Upload failed with status ${response.status}`);
+  }
+
+  return response.json();
+}
+
+export async function inspectWheel(wheelId, imagePath, batchId = null, machineId = null) {
+  const response = await fetch(`${API_BASE_URL}/api/inspection/inspect`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      wheel_id: wheelId,
+      image_path: imagePath,
+      batch_id: batchId,
+      machine_id: machineId,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.detail || `Inspection failed with status ${response.status}`);
+  }
+
+  return response.json();
+}
+
 export async function fetchDefects(params = {}) {
   const query = new URLSearchParams(params).toString();
   const url = `${API_BASE_URL}/api/defects${query ? `?${query}` : ''}`;

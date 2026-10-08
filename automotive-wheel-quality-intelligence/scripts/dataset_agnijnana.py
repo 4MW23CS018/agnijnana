@@ -10,9 +10,6 @@ Original file is located at
 # CELL 1
 # Install all packages required for the dataset pipeline
 
-!pip -q install roboflow ultralytics opencv-python-headless pillow \
-    imagehash pandas numpy matplotlib seaborn tqdm pyyaml scikit-learn
-
 # CELL 2
 # Imports
 
@@ -51,12 +48,12 @@ print("✅ Libraries imported")
 # CELL 3
 # Mount Google Drive
 
-from google.colab import drive
+# Local project root
+from pathlib import Path
 
-drive.mount("/content/drive")
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
-print("✅ Google Drive mounted")
-
+print(f"✅ Project root: {PROJECT_ROOT}")
 # CELL 4
 # Create project directories
 
@@ -841,12 +838,12 @@ classes_df[
     .apply(normalize_label)
 )
 
-display(
-    classes_df
-)
 
-from google.colab import sheets
-sheet = sheets.InteractiveSheet(df=classes_df)
+
+from IPython.display import display
+
+display(classes_df)
+
 
 # CELL 16
 # Print source -> normalized mapping

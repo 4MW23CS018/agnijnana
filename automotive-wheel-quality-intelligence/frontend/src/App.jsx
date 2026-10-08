@@ -10,11 +10,25 @@ export default function App() {
       <header className="app-header">
         <div>
           <h1 className="app-title">Aluminium Wheel Quality Intelligence System</h1>
-          <p style={{ fontSize: '0.875rem', color: '#94a3b8' }}>
-            SINGULARITY 2026 — Track 3 Quality Intelligence Cockpit (Aluminium Alloy Wheel Inspection)
+          <p style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '0.2rem' }}>
+            SINGULARITY 2026 — Track 3 Quality Intelligence Cockpit
           </p>
         </div>
-        <span className="phase-badge">Skeleton / Foundation Phase</span>
+        <span
+          style={{
+            backgroundColor: '#0369a1',
+            color: '#e0f2fe',
+            fontSize: '0.75rem',
+            fontWeight: '700',
+            padding: '0.35rem 0.85rem',
+            borderRadius: '9999px',
+            textTransform: 'uppercase',
+            letterSpacing: '0.05em',
+            border: '1px solid #0284c7',
+          }}
+        >
+          LIVE PROTOTYPE
+        </span>
       </header>
 
       <main>
