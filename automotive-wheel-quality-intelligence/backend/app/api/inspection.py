@@ -138,7 +138,7 @@ async def _save_prediction_record(
         machine_id: str | None,
         batch_id: str | None,
         defect_type: str | None,
-        probability,
+        confidence_score,
         model_version: str | None,
         location=None,
         details=None,
@@ -149,13 +149,13 @@ async def _save_prediction_record(
     to predictions.image_path; wheel_id and detailed inference metadata are stored
     as JSON text in predictions.explanation.
     """
-    prediction_type = (str(defect_type).strip() if defect_type is not None else "")
-    if not prediction_type:
-        prediction_type = f"{component}_unknown"
-    prediction_type = prediction_type[:100]
+    defect_type = (str(defect_type).strip() if defect_type is not None else "")
+    if not defect_type:
+        defect_type = f"{component}_unknown"
+    defect_type = defect_type[:100]
 
     try:
-        numeric_probability = float(probability) if probability is not None else None
+        numeric_probability = float(confidence_score) if confidence_score is not None else None
     except (TypeError, ValueError):
         numeric_probability = None
 
@@ -177,8 +177,8 @@ async def _save_prediction_record(
     record = {
         "target_domain": component,
         "image_path": storage_image_path,
-        "prediction_type": prediction_type,
-        "probability": numeric_probability,
+        "defect_type": defect_type,
+        "confidence_score": numeric_probability,
         "model_version": (str(model_version)[:100] if model_version else None),
         "explanation": json.dumps(explanation_payload, ensure_ascii=False, default=str),
     }
@@ -236,7 +236,7 @@ async def _save_prediction_record(
     logger.info(
         "Saved prediction row to public.predictions (id=%s, type=%s)",
         (saved_row or {}).get("id") if isinstance(saved_row, dict) else None,
-        prediction_type,
+        defect_type,
     )
     return saved_row
 
@@ -560,7 +560,7 @@ async def inspect_wheel(request: WheelInspectionRequest):
             machine_id=request.machine_id,
             batch_id=request.batch_id,
             defect_type=top_defect,
-            probability=top_confidence,
+            confidence_score=top_confidence,
             model_version=getattr(tyre_result, "model", None) or "tyre_yolo",
             location=top_bbox,
             details=tyre_details,
@@ -676,7 +676,7 @@ async def inspect_wheel(request: WheelInspectionRequest):
             machine_id=request.machine_id,
             batch_id=request.batch_id,
             defect_type=top_defect,
-            probability=top_confidence,
+            confidence_score=top_confidence,
             model_version=hybrid_api.model,
             location=top_bbox,
             details=hybrid_api.model_dump(),
@@ -725,7 +725,7 @@ async def inspect_wheel(request: WheelInspectionRequest):
         machine_id=request.machine_id,
         batch_id=request.batch_id,
         defect_type=cnn_pred.defect_type,
-        probability=cnn_pred.confidence,
+        confidence_score=cnn_pred.confidence,
         model_version=cnn_pred.model,
         location=None,
         details={
