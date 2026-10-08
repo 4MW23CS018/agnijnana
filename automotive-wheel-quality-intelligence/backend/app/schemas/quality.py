@@ -12,6 +12,10 @@ class WheelInspectionRequest(BaseModel):
         ..., description="Path or identifier of the wheel image to inspect"
     )
 
+    component: str = Field(
+        default="rim", description="Component type to inspect: 'rim' or 'tyre'"
+    )
+
     batch_id: Optional[str] = Field(
         default=None, description="Casting batch or production lot, when available"
     )
@@ -95,22 +99,29 @@ class WheelAIOutputContract(BaseModel):
     """
     API output contract for wheel inspection results.
     The 'rim' field contains the hybrid YOLO+CNN result when available,
-    or the CNN-only result when YOLO is unavailable.
+    or the CNN-only result when YOLO is unavailable (when component == 'rim').
+    The 'tyre' field contains the Tyre YOLO detection result when component == 'tyre'.
     Backward-compatible legacy fields are preserved.
     """
 
     wheel_id: str
     batch_id: Optional[str] = None
     machine_id: Optional[str] = None
+    component: Optional[str] = Field(default="rim", description="Inspected component type ('rim' or 'tyre')")
 
-    # Hybrid result (primary) — present when hybrid pipeline ran
+    # Hybrid result (primary for rim) — present when hybrid pipeline ran
     hybrid: Optional[HybridRimResult] = Field(
-        default=None, description="Hybrid YOLO localization + CNN classification result"
+        default=None, description="Hybrid YOLO localization + CNN classification result for rim"
     )
 
-    # CNN-only result (backward compat / fallback)
+    # CNN-only result (backward compat / fallback for rim)
     rim: Optional[RimCNNResult] = Field(
         default=None, description="CNN-only rim classification result (legacy / fallback)"
+    )
+
+    # Tyre result — present when component == 'tyre'
+    tyre: Optional[Dict[str, Any]] = Field(
+        default=None, description="Tyre YOLO detection result when component is 'tyre'"
     )
 
     # Legacy top-level fields — maintained for backward compatibility

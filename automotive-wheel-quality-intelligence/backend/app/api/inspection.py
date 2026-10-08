@@ -14,6 +14,7 @@ from app.schemas.quality import (
 from app.services.image_service import save_wheel_image
 from app.services.hybrid_inspection import hybrid_inspector
 from app.services.inference import run_rim_cnn_inference_async
+from app.services.tyre_yolo_detector import tyre_yolo_detector
 
 logger = logging.getLogger(__name__)
 
@@ -44,23 +45,73 @@ async def upload_wheel_image(
     "/inspect",
     response_model=WheelAIOutputContract,
     status_code=status.HTTP_200_OK,
-    summary="Inspect an aluminium alloy wheel using Hybrid YOLO + CNN pipeline",
+    summary="Inspect an aluminium alloy wheel rim or tyre component",
 )
 async def inspect_wheel(request: WheelInspectionRequest):
     """
-    Submit an aluminium wheel/rim image path for hybrid inspection.
+    Submit an image path for visual inspection (rim or tyre).
 
-    Pipeline:
-        1. YOLO localization — identify candidate defect regions and bounding boxes
-        2. CNN crop classification — classify each localized region (8 classes)
-        3. Full-image CNN — provide baseline classification result
-
-    Confidence values from YOLO and CNN are kept separate — they measure
-    different tasks and must NOT be compared directly.
-
-    If YOLO finds no detections, a CNN-only fallback result is returned.
+    Components:
+        - "rim": Hybrid YOLO localization + CNN classification pipeline
+        - "tyre": Standalone Tyre YOLO object detection pipeline
     """
-    # ── Run hybrid pipeline ────────────────────────────────────────────────────
+    comp = (request.component or "rim").lower().strip()
+
+    if comp not in ("rim", "tyre"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid component '{request.component}'. Must be 'rim' or 'tyre'.",
+        )
+
+    # ── Tyre Inspection Path ──────────────────────────────────────────────────
+    if comp == "tyre":
+        if not tyre_yolo_detector.is_ready:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Tyre YOLO detection service is not available",
+            )
+        try:
+            tyre_result = await tyre_yolo_detector.detect_async(request.image_path)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc))
+        except Exception as exc:
+            logger.error("Tyre inspection failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Tyre inspection internal failure",
+            )
+
+        top_defect = None
+        top_confidence = None
+        top_bbox = None
+        if tyre_result.detections:
+            top_det = tyre_result.detections[0]
+            top_defect = top_det.class_name
+            top_confidence = top_det.confidence
+            top_bbox = top_det.bbox
+
+        return WheelAIOutputContract(
+            wheel_id=request.wheel_id,
+            batch_id=request.batch_id,
+            machine_id=request.machine_id,
+            component="tyre",
+            hybrid=None,
+            rim=None,
+            tyre=tyre_result.model_dump(),
+            defect_type=top_defect,
+            location=top_bbox,
+            severity=None,
+            defect_confidence=top_confidence,
+            root_cause=None,
+            root_cause_confidence=None,
+            future_risk=None,
+            recommended_action=None,
+            affected_batches=[],
+        )
+
+    # ── Rim Inspection Path (Hybrid YOLO + CNN) ──────────────────────────────
     if hybrid_inspector.is_ready:
         try:
             hybrid_result = await hybrid_inspector.inspect_async(request.image_path)
@@ -113,20 +164,17 @@ async def inspect_wheel(request: WheelInspectionRequest):
         )
 
         # Determine top-level defect_type and confidence for backward-compat fields
-        # Priority: first localized CNN defect → full-image CNN fallback
         fic = hybrid_result.full_image_cnn or {}
         if api_localized:
             top = api_localized[0].classification
             top_defect = top.cnn_defect_type
             top_confidence = top.cnn_confidence
-            # Location is the first YOLO bbox
             top_bbox = api_localized[0].localization.bbox
         else:
             top_defect = fic.get("defect_type")
             top_confidence = fic.get("confidence")
             top_bbox = None
 
-        # Legacy rim field: use full-image CNN result
         rim_legacy = None
         if fic:
             rim_legacy = RimCNNResult(
@@ -142,8 +190,10 @@ async def inspect_wheel(request: WheelInspectionRequest):
             wheel_id=request.wheel_id,
             batch_id=request.batch_id,
             machine_id=request.machine_id,
+            component="rim",
             hybrid=hybrid_api,
             rim=rim_legacy,
+            tyre=None,
             defect_type=top_defect,
             location=top_bbox,
             severity=None,
@@ -172,8 +222,10 @@ async def inspect_wheel(request: WheelInspectionRequest):
         wheel_id=request.wheel_id,
         batch_id=request.batch_id,
         machine_id=request.machine_id,
+        component="rim",
         hybrid=None,
         rim=rim_result,
+        tyre=None,
         defect_type=cnn_pred.defect_type,
         location=None,
         severity=None,
@@ -194,6 +246,7 @@ async def inspect_wheel(request: WheelInspectionRequest):
 def get_inspection(wheel_id: str):
     return WheelAIOutputContract(
         wheel_id=wheel_id,
+        component="rim",
         defect_type=None,
         location=None,
         severity=None,
