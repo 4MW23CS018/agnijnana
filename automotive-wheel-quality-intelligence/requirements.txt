@@ -1,0 +1,24 @@
+# Deep Learning
+torch==2.11.0
+torchvision==0.26.0
+
+# Object Detection / Segmentation
+ultralytics==8.4.174
+
+# Data Processing
+numpy
+pandas
+pyyaml
+
+# Image Processing
+Pillow
+opencv-python-headless
+
+# Machine Learning / Evaluation
+scikit-learn
+
+# Visualization
+matplotlib
+
+# Utilities
+tqdm
