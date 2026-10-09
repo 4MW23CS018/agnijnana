@@ -1,4 +1,5 @@
-import React from 'react';
+
+import React, { useState } from 'react';
 import WheelInspection from '../../components/WheelInspection/WheelInspection';
 import SystemStatus from '../../components/SystemStatus/SystemStatus';
 import SeverityCard from '../../components/SeverityCard/SeverityCard';
@@ -8,16 +9,15 @@ import Recommendation from '../../components/Recommendation/Recommendation';
 import Alerts from '../../components/Alerts/Alerts';
 
 export default function Dashboard() {
+  const [inspectionResult, setInspectionResult] = useState(null);
+
   return (
     <div className="dashboard-layout">
-      {/* Primary Visual Inspection & Live CNN Classifier */}
-      <WheelInspection />
+      <WheelInspection onInspectionComplete={setInspectionResult} />
 
-      {/* System Operational Status */}
       <SystemStatus />
 
-      {/* Quality Intelligence Modules (Pending Roadmap) */}
-      <SeverityCard />
+      <SeverityCard inspectionResult={inspectionResult} />
       <RootCause />
       <RiskPrediction />
       <Recommendation />

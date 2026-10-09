@@ -97,7 +97,7 @@ function BBoxOverlay({ detections, imgNaturalSize, isTyre }) {
 }
 
 // ── Main component ─────────────────────────────────────────────────────────
-export default function WheelInspection() {
+export default function WheelInspection({ onInspectionComplete }) {
   const [selectedFile, setSelectedFile] = useState(null);
   const [previewUrl, setPreviewUrl] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -133,6 +133,7 @@ export default function WheelInspection() {
       const wheelId = `${component.toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`;
       const data = await inspectWheel(wheelId, uploadRes.image_path, 'LOT-2026-A', 'DIE-CAST-01', component);
       setResult(data);
+      onInspectionComplete?.(data);
     } catch (err) {
       setErrorMsg(err.message || 'Inspection failed.');
     } finally {
