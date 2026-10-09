@@ -1,0 +1,14 @@
+defect_class,probable_root_cause,process_factors,corrective_action,knowledge_confidence,process_stage
+scratch,Handling or fixture contact issue,"vibration;handling speed;contact surface","Inspect handling path, fixture and contact surfaces for rubbing or sharp edges.",0.82,handling
+scuff,Handling or fixture contact issue,"vibration;handling speed;contact surface","Inspect fixture/handling surfaces and reduce excessive relative movement.",0.82,handling
+paint_damage,Coating-process deviation,"humidity;coating speed;surface preparation","Inspect coating parameters, environmental humidity and surface preparation.",0.88,finishing
+bent_rim,Tooling or process deformation,"pressure;thermal condition;fixture alignment","Inspect tooling/fixture alignment and verify the forming/casting process settings.",0.78,casting
+buckle,Tooling or deformation issue,"pressure;thermal condition;fixture alignment","Inspect die/tool alignment and investigate abnormal deformation conditions.",0.78,casting
+crack,Thermal stress or cooling imbalance,"melt temperature;die temperature;cooling rate","Verify thermal control and cooling balance; inspect for abnormal thermal gradients.",0.91,casting
+porosity,Gas entrapment or material-condition issue,"melt temperature;fill pressure;degassing;venting","Inspect melt quality/degassing and verify filling, pressure and venting conditions.",0.90,casting
+blow_hole,Gas entrapment or contamination,"melt condition;pressure;venting;moisture","Check gas control, moisture/contamination sources and venting; verify filling conditions.",0.89,casting_or_welding
+incomplete_welding,Insufficient joining-process control,"joining pressure;process speed;cleanliness","Verify joining parameters, surface preparation and process speed/pressure.",0.86,welding
+scuff_severe,Severe handling or fixture contact issue,"vibration;handling speed;contact surface","Stop and inspect the handling/fixture path for excessive contact, wear or misalignment.",0.84,handling
+corrosion,Surface protection or environmental exposure issue,"humidity;surface preparation;coating","Inspect surface protection/coating process and control environmental exposure.",0.76,finishing
+chip,Mechanical impact or handling damage,"handling;fixture;contact force","Inspect handling equipment and contact points; correct excessive impact or interference.",0.76,handling
+mixed_porosity_blowhole,Gas entrapment / casting-process instability,"melt condition;pressure;venting;degassing","Inspect degassing, venting and filling-pressure stability; verify melt condition.",0.90,casting

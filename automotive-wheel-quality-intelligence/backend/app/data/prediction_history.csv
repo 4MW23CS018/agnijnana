@@ -1,0 +1,5 @@
+inspection_id,timestamp,part_id,batch_id,machine_id,predicted_defect,model_confidence,defect_present,severity
+INS000001,2026-10-01 08:00:00,WH000001,B0127,M04,no_defect,0.97,0,Low
+INS000002,2026-10-01 08:05:00,WH000002,B0127,M04,porosity,0.91,1,High
+INS000003,2026-10-01 08:10:00,WH000003,B0127,M04,no_defect,0.95,0,Low
+INS000004,2026-10-01 08:15:00,WH000004,B0127,M04,porosity,0.89,1,High
