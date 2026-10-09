@@ -2,6 +2,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from app.api import future_risk
 
 from app.core.config import settings
 from app.schemas.quality import HealthResponse
@@ -20,6 +21,12 @@ app = FastAPI(
     title=settings.PROJECT_NAME,
     description="Industrial Quality Intelligence System REST API for Aluminium Alloy Wheels — Singularity 2026",
     version="0.1.0",
+)
+
+app.include_router(
+    future_risk.router,
+    prefix="/api/future-risk",
+    tags=["Future Risk"],
 )
 
 # Mount static uploads directory for serving uploaded wheel images
