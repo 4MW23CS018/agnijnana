@@ -1,17 +1,9 @@
-# Deep Learning
-torch==2.11.0
-torchvision==0.26.0
-
-# Object Detection / Segmentation
-ultralytics==8.4.174
-
 # Data Processing
 numpy
 pandas
 pyyaml
 
 # Image Processing
-Pillow
 opencv-python-headless
 
 # Machine Learning / Evaluation
@@ -22,3 +14,12 @@ matplotlib
 
 # Utilities
 tqdm
+
+Pillow==12.3.0
+torch==2.14.1
+torchvision==0.29.1
+opencv-python==4.14.0.94
+ultralytics==8.4.158
+python-multipart==0.0.32
+
+uvicorn[standard]==0.54.0
